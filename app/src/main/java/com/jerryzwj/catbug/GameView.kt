@@ -251,11 +251,31 @@ class GameView @JvmOverloads constructor(
         if (b.y < top) { b.y = top; b.phase += 0.4f }
         if (b.y > bottom) { b.y = bottom; b.phase += 0.4f }
 
-        if ((b.dir > 0 && b.x - b.size > width + dp * 10f) ||
-            (b.dir < 0 && b.x + b.size < -dp * 10f)
-        ) {
-            b.dead = true
+        // 爬到边缘不掉头消失，转身继续在屏幕里爬
+        val edge = b.size * 0.55f + dp * 4f
+        if (b.dir > 0 && b.x > width - edge) {
+            b.x = width - edge
+            turnAround(b)
+        } else if (b.dir < 0 && b.x < edge) {
+            b.x = edge
+            turnAround(b)
         }
+    }
+
+    private fun turnAround(b: Bug) {
+        b.dir = -b.dir
+        b.phase += Random.nextFloat() * 1.2f
+        // 掉头时换个节奏，避免在同一条水平线来回蹭
+        if (Random.nextFloat() < 0.45f) {
+            b.gait = when {
+                b.species == Species.MOTH -> Gait.ZIGZAG
+                b.species == Species.CENTIPEDE -> Gait.STRAIGHT
+                else -> listOf(Gait.STRAIGHT, Gait.ZIGZAG, Gait.STAGGER).random()
+            }
+        }
+        val span = (height - dp * 130f).coerceAtLeast(1f)
+        b.y = (b.y + (Random.nextFloat() - 0.5f) * span * 0.35f)
+            .coerceIn(dp * 58f, height - dp * 58f)
     }
 
     // ---------------------------------------------------------------- 生成
