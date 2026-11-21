@@ -268,11 +268,11 @@ class GameView @JvmOverloads constructor(
         val sizeDp: Float
         val speedDp: Float
         when (species) {
-            Species.BEETLE -> { sizeDp = 27f; speedDp = 58f }
-            Species.ROACH -> { sizeDp = 31f; speedDp = 92f }
-            Species.SPIDER -> { sizeDp = 30f; speedDp = 74f }
-            Species.MOTH -> { sizeDp = 28f; speedDp = 118f }
-            Species.CENTIPEDE -> { sizeDp = 46f; speedDp = 42f }
+            Species.BEETLE -> { sizeDp = 44f; speedDp = 66f }
+            Species.ROACH -> { sizeDp = 50f; speedDp = 100f }
+            Species.SPIDER -> { sizeDp = 48f; speedDp = 82f }
+            Species.MOTH -> { sizeDp = 46f; speedDp = 126f }
+            Species.CENTIPEDE -> { sizeDp = 72f; speedDp = 48f }
         }
 
         var size = dp * sizeDp * (0.88f + Random.nextFloat() * 0.28f)
