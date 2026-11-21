@@ -78,6 +78,7 @@ class GameView @JvmOverloads constructor(
 
     private val bugPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val splatPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.BLACK
         textAlign = Paint.Align.LEFT
@@ -89,7 +90,6 @@ class GameView @JvmOverloads constructor(
     private val path = Path()
 
     private val bugColor = 0xFF1A1A1A.toInt()
-    private val fatColor = 0xFF14351F.toInt()
 
     init {
         setBackgroundColor(Color.WHITE)
@@ -252,7 +252,7 @@ class GameView @JvmOverloads constructor(
         if (b.y > bottom) { b.y = bottom; b.phase += 0.4f }
 
         // 爬到边缘不掉头消失，转身继续在屏幕里爬
-        val edge = b.size * 0.55f + dp * 4f
+        val edge = b.size * (if (b.species == Species.CENTIPEDE) 0.80f else 0.55f) + dp * 4f
         if (b.dir > 0 && b.x > width - edge) {
             b.x = width - edge
             turnAround(b)
@@ -338,156 +338,321 @@ class GameView @JvmOverloads constructor(
     // ---------------------------------------------------------------- 绘制
 
     private fun drawBug(canvas: Canvas, b: Bug) {
-        val p = bugPaint
-        p.color = if (b.fat) fatColor else bugColor
-        p.alpha = 255
-
         canvas.save()
         canvas.translate(b.x, b.y)
+
+        if (!b.squished) drawBugShadow(canvas, b.size)
+
         if (b.dir < 0) canvas.rotate(180f)
 
         if (b.squished) {
             val k = (b.squishT / 0.58f).coerceIn(0f, 1f)
-            val alpha = when {
-                k < 0.55f -> 255
-                else -> (255 * (1f - (k - 0.55f) / 0.45f)).toInt().coerceIn(0, 255)
-            }
-            // 压扁的"体液"痕迹
+            val alpha = if (k < 0.55f) 255 else (255 * (1f - (k - 0.55f) / 0.45f)).toInt().coerceIn(0, 255)
+
+            // 压扁后散开的体液
             splatPaint.style = Paint.Style.FILL
-            splatPaint.color = p.color
-            splatPaint.alpha = ((alpha * 0.55f).toInt()).coerceIn(0, 255)
+            splatPaint.color = splatColor(b.species)
+            splatPaint.alpha = (alpha * 0.55f).toInt().coerceIn(0, 255)
             canvas.drawOval(
                 -b.size * (0.55f + k * 0.25f), -b.size * 0.10f,
                 b.size * (0.55f + k * 0.25f), b.size * 0.12f, splatPaint
             )
             canvas.save()
             canvas.scale(1f + k * 0.5f, (1f - k * 0.75f).coerceAtLeast(0.1f))
-            drawSpecies(canvas, b.size, b.species, b.phase, p.color, alpha)
+            drawSpecies(canvas, b.size, b.species, b.phase, alpha, b.fat)
             canvas.restore()
         } else {
             val wobble = when (b.gait) {
-                Gait.ZIGZAG -> sin(b.phase * 7f) * 7f
+                Gait.ZIGZAG -> sin(b.phase * 7f) * 6f
                 Gait.STAGGER -> sin(b.phase * 3f) * 3f
                 else -> sin(b.phase * 4f) * 1.5f
             }
             canvas.rotate(wobble)
-            drawSpecies(canvas, b.size, b.species, b.phase, p.color, 255)
+            drawSpecies(canvas, b.size, b.species, b.phase, 255, b.fat)
         }
         canvas.restore()
     }
 
-    private fun drawSpecies(canvas: Canvas, s: Float, species: Species, phase: Float, color: Int, alpha: Int) {
+    private fun drawBugShadow(canvas: Canvas, s: Float) {
+        shadowPaint.color = Color.BLACK
+        shadowPaint.alpha = 22
+        canvas.drawOval(-s * 0.44f, s * 0.20f, s * 0.44f, s * 0.34f, shadowPaint)
+    }
+
+    private fun splatColor(species: Species): Int = when (species) {
+        Species.BEETLE -> 0xFF3E5B2C.toInt()
+        Species.ROACH -> 0xFF8A5426.toInt()
+        Species.SPIDER -> 0xFF5A4A34.toInt()
+        Species.MOTH -> 0xFFB08A5A.toInt()
+        Species.CENTIPEDE -> 0xFFB0552E.toInt()
+    }
+
+    private fun fill(canvas: Canvas, color: Int, alpha: Int): Paint {
         val p = bugPaint
+        p.style = Paint.Style.FILL
         p.color = color
         p.alpha = alpha
-        p.strokeWidth = (s * 0.075f).coerceAtLeast(dp * 1.4f)
+        p.shader = null
+        return p
+    }
+
+    private fun stroke(color: Int, alpha: Int, width: Float): Paint {
+        val p = bugPaint
+        p.style = Paint.Style.STROKE
+        p.color = color
+        p.alpha = alpha
+        p.strokeWidth = width
         p.strokeCap = Paint.Cap.ROUND
+        p.shader = null
+        return p
+    }
 
+    private fun drawSpecies(canvas: Canvas, s: Float, species: Species, phase: Float, alpha: Int, fat: Boolean) {
         when (species) {
-            Species.BEETLE -> {
-                p.style = Paint.Style.FILL
-                tmpRect.set(-s * 0.40f, -s * 0.34f, s * 0.40f, s * 0.34f)
-                canvas.drawOval(tmpRect, p)
-                canvas.drawCircle(s * 0.44f, 0f, s * 0.22f, p)
+            Species.BEETLE -> drawBeetle(canvas, s, phase, alpha, fat)
+            Species.ROACH -> drawRoach(canvas, s, phase, alpha, fat)
+            Species.SPIDER -> drawSpider(canvas, s, phase, alpha, fat)
+            Species.MOTH -> drawMoth(canvas, s, phase, alpha, fat)
+            Species.CENTIPEDE -> drawCentipede(canvas, s, phase, alpha, fat)
+        }
+    }
 
-                p.style = Paint.Style.STROKE
-                for (i in -1..1) {
-                    val lx = i * s * 0.22f
-                    val wig = sin(phase * 9f + i * 1.2f) * s * 0.07f
-                    canvas.drawLine(lx, -s * 0.30f, lx - s * 0.10f, -s * 0.52f - wig, p)
-                    canvas.drawLine(lx, s * 0.30f, lx - s * 0.10f, s * 0.52f + wig, p)
-                }
-                canvas.drawLine(s * 0.52f, -s * 0.10f, s * 0.74f, -s * 0.32f, p)
-                canvas.drawLine(s * 0.52f, s * 0.10f, s * 0.74f, s * 0.32f, p)
-            }
-
-            Species.ROACH -> {
-                p.style = Paint.Style.FILL
-                tmpRect.set(-s * 0.52f, -s * 0.22f, s * 0.44f, s * 0.22f)
-                canvas.drawOval(tmpRect, p)
-                canvas.drawCircle(s * 0.50f, 0f, s * 0.15f, p)
-
-                p.style = Paint.Style.STROKE
-                for (i in -1..1) {
-                    val lx = i * s * 0.22f
-                    val wig = sin(phase * 13f + i * 1.5f) * s * 0.08f
-                    canvas.drawLine(lx, -s * 0.20f, lx - s * 0.14f, -s * 0.48f - wig, p)
-                    canvas.drawLine(lx, s * 0.20f, lx - s * 0.14f, s * 0.48f + wig, p)
-                }
-                // 长触角
-                canvas.drawLine(s * 0.56f, -s * 0.08f, s * 0.78f, -s * 0.30f, p)
-                canvas.drawLine(s * 0.78f, -s * 0.30f, s * 0.92f, -s * 0.16f, p)
-                canvas.drawLine(s * 0.56f, s * 0.08f, s * 0.78f, s * 0.30f, p)
-                canvas.drawLine(s * 0.78f, s * 0.30f, s * 0.92f, s * 0.16f, p)
-            }
-
-            Species.SPIDER -> {
-                p.style = Paint.Style.STROKE
-                val legLen = s * 0.34f
-                for (side in intArrayOf(-1, 1)) {
-                    for (i in 0..3) {
-                        val baseAng = Math.toRadians((30.0 + i * 33.0) * side).toFloat()
-                        val wig = sin(phase * 9f + i * 0.8f) * 0.16f
-                        val a1 = baseAng + wig
-                        val kx = s * 0.12f + cos(a1) * legLen * 0.55f
-                        val ky = sin(a1) * legLen * 0.55f
-                        val fx = kx + cos(a1) * legLen * 0.55f
-                        val fy = ky + sin(a1) * legLen * 0.55f
-                        canvas.drawLine(s * 0.12f, 0f, kx, ky, p)
-                        canvas.drawLine(kx, ky, fx, fy, p)
-                    }
-                }
-                p.style = Paint.Style.FILL
-                canvas.drawCircle(-s * 0.14f, 0f, s * 0.30f, p)
-                canvas.drawCircle(s * 0.16f, 0f, s * 0.18f, p)
-                p.style = Paint.Style.STROKE
-                canvas.drawCircle(-s * 0.14f, 0f, s * 0.08f, p)
-            }
-
-            Species.MOTH -> {
-                val flap = 0.45f + 0.55f * abs(sin(phase * 13f))
-                p.style = Paint.Style.FILL
-                // 上翅
-                path.reset()
-                path.moveTo(s * 0.06f, -s * 0.06f)
-                path.lineTo(-s * 0.38f, -s * 0.58f * flap)
-                path.lineTo(-s * 0.50f, -s * 0.04f)
-                path.close()
-                canvas.drawPath(path, p)
-                // 下翅
-                path.reset()
-                path.moveTo(s * 0.06f, s * 0.06f)
-                path.lineTo(-s * 0.34f, s * 0.52f * flap)
-                path.lineTo(-s * 0.48f, s * 0.02f)
-                path.close()
-                canvas.drawPath(path, p)
-                // 身体
-                tmpRect.set(-s * 0.06f, -s * 0.30f, s * 0.16f, s * 0.30f)
-                canvas.drawOval(tmpRect, p)
-                p.style = Paint.Style.STROKE
-                p.strokeWidth = (s * 0.05f).coerceAtLeast(dp)
-                canvas.drawLine(s * 0.12f, -s * 0.22f, s * 0.34f, -s * 0.44f, p)
-                canvas.drawLine(s * 0.12f, s * 0.22f, s * 0.34f, s * 0.44f, p)
-            }
-
-            Species.CENTIPEDE -> {
-                p.style = Paint.Style.STROKE
-                val seg = 7
-                for (i in 0..seg) {
-                    val fx = -s * 0.50f + (i.toFloat() / seg) * s * 0.95f
-                    val off = sin(phase * 6f + i * 0.9f) * s * 0.07f
-                    p.style = Paint.Style.FILL
-                    val r = s * 0.15f * (1f - abs(i - seg / 2f) / (seg * 1.6f))
-                    canvas.drawCircle(fx, off, r, p)
-                    p.style = Paint.Style.STROKE
-                    p.strokeWidth = (s * 0.055f).coerceAtLeast(dp)
-                    if (i < seg) {
-                        canvas.drawLine(fx, off - r * 0.8f, fx - s * 0.06f, off - s * 0.26f, p)
-                        canvas.drawLine(fx, off + r * 0.8f, fx - s * 0.06f, off + s * 0.26f, p)
-                    }
-                }
+    /** 金龟子：墨绿鞘翅 + 金属高光 */
+    private fun drawBeetle(c: Canvas, s: Float, phase: Float, a: Int, fat: Boolean) {
+        val legW = (s * 0.055f).coerceAtLeast(dp)
+        val legs = stroke(0xFF2A2016.toInt(), a, legW)
+        for (i in -1..1) {
+            val lx = i * s * 0.18f
+            for (side in intArrayOf(-1, 1)) {
+                val wig = sin(phase * 8.5f + i * 1.1f + (if (side > 0) 0f else 1.7f)) * s * 0.10f
+                val kx = lx - s * 0.10f
+                val ky = side * s * 0.46f + wig
+                val fx = kx - s * 0.12f
+                val fy = side * s * 0.60f + wig * 0.4f
+                c.drawLine(lx, side * s * 0.26f, kx, ky, legs)
+                c.drawLine(kx, ky, fx, fy, legs)
             }
         }
+
+        // 鞘翅
+        c.drawOval(rect(-s * 0.40f, -s * 0.34f, s * 0.38f, s * 0.34f), fill(c, 0xFF34502A.toInt(), a))
+        c.drawOval(rect(-s * 0.34f, -s * 0.28f, s * 0.28f, s * 0.30f), fill(c, 0xFF446737.toInt(), a))
+        // 金属高光
+        c.drawOval(rect(-s * 0.24f, -s * 0.24f, s * 0.06f, s * 0.04f), fill(c, 0xFF7FA85C.toInt(), (a * 0.55f).toInt()))
+        // 翅中缝
+        c.drawLine(s * 0.10f, 0f, -s * 0.40f, 0f, stroke(0xFF1E2A18.toInt(), a, (s * 0.022f).coerceAtLeast(dp * 0.7f)))
+        // 前胸背板
+        c.drawOval(rect(s * 0.10f, -s * 0.30f, s * 0.40f, s * 0.30f), fill(c, 0xFF273C1F.toInt(), a))
+        c.drawOval(rect(s * 0.14f, -s * 0.22f, s * 0.32f, s * 0.02f), fill(c, 0xFF4C6E3A.toInt(), (a * 0.6f).toInt()))
+        // 头
+        c.drawCircle(s * 0.44f, 0f, s * 0.19f, fill(c, 0xFF1B1B1B.toInt(), a))
+        c.drawCircle(s * 0.40f, -s * 0.07f, s * 0.06f, fill(c, 0xFF4A4A4A.toInt(), (a * 0.7f).toInt()))
+        // 触角（末端带小球）
+        val ant = stroke(0xFF231A10.toInt(), a, (s * 0.035f).coerceAtLeast(dp * 0.9f))
+        for (side in intArrayOf(-1, 1)) {
+            c.drawLine(s * 0.52f, side * s * 0.12f, s * 0.72f, side * s * 0.28f, ant)
+            c.drawCircle(s * 0.76f, side * s * 0.31f, s * 0.045f, fill(c, 0xFF231A10.toInt(), a))
+        }
+        if (fat) c.drawOval(rect(-s * 0.38f, -s * 0.30f, s * 0.30f, s * 0.28f), fill(c, 0xFFFFCE6B.toInt(), (a * 0.18f).toInt()))
+    }
+
+    /** 蟑螂：油亮棕红，长触角 */
+    private fun drawRoach(c: Canvas, s: Float, phase: Float, a: Int, fat: Boolean) {
+        val legW = (s * 0.045f).coerceAtLeast(dp)
+        val legs = stroke(0xFF3A2412.toInt(), a, legW)
+        for (i in -1..1) {
+            val lx = i * s * 0.22f
+            for (side in intArrayOf(-1, 1)) {
+                val wig = sin(phase * 12f + i * 1.4f + (if (side > 0) 0f else 1.9f)) * s * 0.09f
+                val kx = lx - s * 0.14f
+                val ky = side * s * 0.40f + wig
+                val fx = kx - s * 0.16f
+                val fy = side * s * 0.56f + wig * 0.4f
+                c.drawLine(lx, side * s * 0.18f, kx, ky, legs)
+                c.drawLine(kx, ky, fx, fy, legs)
+            }
+        }
+
+        // 触角
+        val ant = stroke(0xFF3A2412.toInt(), a, (s * 0.035f).coerceAtLeast(dp * 0.8f))
+        for (side in intArrayOf(-1, 1)) {
+            val sway = sin(phase * 4.5f + (if (side > 0) 0f else 1.2f)) * s * 0.10f
+            c.drawLine(s * 0.52f, side * s * 0.08f, s * 0.74f, side * (s * 0.26f) + sway, ant)
+            c.drawLine(s * 0.74f, side * (s * 0.26f) + sway, s * 0.94f, side * (s * 0.14f) + sway * 1.4f, ant)
+        }
+
+        // 腹部（鞘翅）
+        c.drawOval(rect(-s * 0.52f, -s * 0.22f, s * 0.42f, s * 0.22f), fill(c, 0xFF7A4518.toInt(), a))
+        c.drawOval(rect(-s * 0.50f, -s * 0.20f, s * 0.40f, s * 0.02f), fill(c, 0xFF9A5C25.toInt(), a))
+        c.drawOval(rect(-s * 0.30f, -s * 0.14f, s * 0.16f, s * 0.04f), fill(c, 0xFFC08348.toInt(), (a * 0.6f).toInt()))
+        // 翅中缝
+        c.drawLine(s * 0.18f, 0f, -s * 0.50f, 0f, stroke(0xFF552F0E.toInt(), a, (s * 0.02f).coerceAtLeast(dp * 0.6f)))
+        // 前胸背板
+        c.drawOval(rect(s * 0.20f, -s * 0.26f, s * 0.46f, s * 0.26f), fill(c, 0xFF4A2A10.toInt(), a))
+        c.drawOval(rect(s * 0.24f, -s * 0.20f, s * 0.40f, s * 0.00f), fill(c, 0xFF7A4A1E.toInt(), (a * 0.5f).toInt()))
+        // 头
+        c.drawCircle(s * 0.50f, 0f, s * 0.14f, fill(c, 0xFF231204.toInt(), a))
+        // 尾须
+        val cerci = stroke(0xFF3A2412.toInt(), a, (s * 0.03f).coerceAtLeast(dp * 0.7f))
+        c.drawLine(-s * 0.52f, -s * 0.06f, -s * 0.64f, -s * 0.16f, cerci)
+        c.drawLine(-s * 0.52f, s * 0.06f, -s * 0.64f, s * 0.16f, cerci)
+        if (fat) c.drawOval(rect(-s * 0.46f, -s * 0.18f, s * 0.36f, s * 0.18f), fill(c, 0xFFFFCE6B.toInt(), (a * 0.18f).toInt()))
+    }
+
+    /** 蜘蛛：八条分节腿 + 腹部花纹 */
+    private fun drawSpider(c: Canvas, s: Float, phase: Float, a: Int, fat: Boolean) {
+        val legW = (s * 0.045f).coerceAtLeast(dp)
+        val legs = stroke(0xFF4A3521.toInt(), a, legW)
+        val joint = fill(c, 0xFF3A2917.toInt(), a)
+        for (side in intArrayOf(-1, 1)) {
+            for (i in 0..3) {
+                val baseAng = Math.toRadians((28.0 + i * 34.0) * side).toFloat()
+                val wig = sin(phase * 8.5f + i * 0.9f + (if (side > 0) 0f else 1.4f)) * 0.14f
+                val a1 = baseAng + wig
+                val kx = s * 0.14f + cos(a1) * s * 0.30f
+                val ky = sin(a1) * s * 0.30f
+                val fx = kx + cos(a1) * s * 0.34f
+                val fy = ky + sin(a1) * s * 0.34f
+                c.drawLine(s * 0.14f, 0f, kx, ky, legs)
+                c.drawLine(kx, ky, fx, fy, legs)
+                c.drawCircle(kx, ky, legW * 0.9f, joint)
+            }
+        }
+
+        // 腹部
+        c.drawOval(rect(-s * 0.46f, -s * 0.32f, s * 0.04f, s * 0.32f), fill(c, 0xFF2E2418.toInt(), a))
+        c.drawOval(rect(-s * 0.42f, -s * 0.27f, s * 0.00f, s * 0.27f), fill(c, 0xFF5A4527.toInt(), a))
+        c.drawOval(rect(-s * 0.34f, -s * 0.14f, s * 0.02f, s * 0.02f), fill(c, 0xFF7A6034.toInt(), (a * 0.55f).toInt()))
+        // 腹部斑纹（浅色人字纹）
+        val mark = stroke(0xFFC9B07A.toInt(), (a * 0.9f).toInt(), (s * 0.05f).coerceAtLeast(dp * 1.1f))
+        for (i in 0..2) {
+            val mx = -s * 0.34f + i * s * 0.11f
+            c.drawLine(mx - s * 0.06f, -s * 0.18f, mx + s * 0.02f, 0f, mark)
+            c.drawLine(mx - s * 0.06f, s * 0.18f, mx + s * 0.02f, 0f, mark)
+        }
+
+        // 头胸部
+        c.drawCircle(s * 0.18f, 0f, s * 0.20f, fill(c, 0xFF3B2C1C.toInt(), a))
+        c.drawCircle(s * 0.14f, -s * 0.06f, s * 0.08f, fill(c, 0xFF5A462E.toInt(), (a * 0.7f).toInt()))
+        // 眼睛
+        val eye = fill(c, 0xFFE6DDC8.toInt(), a)
+        c.drawCircle(s * 0.30f, -s * 0.06f, s * 0.035f, eye)
+        c.drawCircle(s * 0.30f, s * 0.06f, s * 0.035f, eye)
+        if (fat) c.drawOval(rect(-s * 0.40f, -s * 0.26f, s * 0.00f, s * 0.24f), fill(c, 0xFFFFCE6B.toInt(), (a * 0.18f).toInt()))
+    }
+
+    /** 飞蛾：棕黄四翅 + 眼斑 + 绒毛身体 + 持续扇动 */
+    private fun drawMoth(c: Canvas, s: Float, phase: Float, a: Int, fat: Boolean) {
+        val spread = 0.62f + 0.38f * abs(sin(phase * 13f))
+        val flap = sin(phase * 13f) * 7f
+        val edgeW = (s * 0.022f).coerceAtLeast(dp * 0.6f)
+
+        for (side in intArrayOf(-1, 1)) {
+            c.save()
+            c.scale(1f, side.toFloat())
+            c.rotate(-flap)
+
+            // 后翅（略浅、圆润）
+            path.reset()
+            path.moveTo(s * 0.12f, s * 0.02f)
+            path.quadTo(-s * 0.02f, s * 0.44f * spread, -s * 0.34f, s * 0.42f * spread)
+            path.quadTo(-s * 0.52f, s * 0.34f * spread, -s * 0.46f, s * 0.06f)
+            path.quadTo(-s * 0.34f, -s * 0.04f, -s * 0.08f, s * 0.00f)
+            path.close()
+            c.drawPath(path, fill(c, 0xFF9C6C33.toInt(), a))
+            c.drawOval(rect(-s * 0.36f, s * 0.04f, -s * 0.14f, s * 0.26f * spread), fill(c, 0xFFB98B49.toInt(), (a * 0.6f).toInt()))
+            c.drawPath(path, stroke(0xFF57391A.toInt(), (a * 0.85f).toInt(), edgeW))
+
+            // 前翅（主翅 + 翅尖暗部 + 横向深带）
+            path.reset()
+            path.moveTo(s * 0.16f, s * 0.05f)
+            path.quadTo(s * 0.04f, s * 0.50f * spread, -s * 0.22f, s * 0.56f * spread)
+            path.quadTo(-s * 0.46f, s * 0.56f * spread, -s * 0.46f, s * 0.26f * spread)
+            path.quadTo(-s * 0.38f, s * 0.04f, -s * 0.06f, s * 0.01f)
+            path.close()
+            c.drawPath(path, fill(c, 0xFFB9823B.toInt(), a))
+            c.drawOval(rect(-s * 0.46f, s * 0.18f * spread, -s * 0.24f, s * 0.50f * spread), fill(c, 0xFF8E5A22.toInt(), (a * 0.5f).toInt()))
+            val band = stroke(0xFF6B4517.toInt(), (a * 0.55f).toInt(), (s * 0.06f).coerceAtLeast(dp))
+            c.drawLine(-s * 0.42f, s * 0.30f * spread, -s * 0.10f, s * 0.16f, band)
+            // 眼斑
+            c.drawCircle(-s * 0.30f, s * 0.30f * spread, (s * 0.075f).coerceAtLeast(dp * 2f), fill(c, 0xFFEBD8B2.toInt(), a))
+            c.drawCircle(-s * 0.30f, s * 0.30f * spread, (s * 0.038f).coerceAtLeast(dp * 1f), fill(c, 0xFF4A3016.toInt(), a))
+            c.drawPath(path, stroke(0xFF57391A.toInt(), (a * 0.85f).toInt(), edgeW))
+            // 翅脉
+            val vein = stroke(0xFF7A5220.toInt(), (a * 0.45f).toInt(), dp * 0.9f)
+            c.drawLine(s * 0.10f, s * 0.04f, -s * 0.26f, s * 0.44f * spread, vein)
+            c.drawLine(s * 0.03f, s * 0.04f, -s * 0.30f, s * 0.20f, vein)
+
+            c.restore()
+        }
+
+        // 腹部（绒毛 + 浅色横带）
+        c.drawOval(rect(-s * 0.34f, -s * 0.22f, s * 0.06f, s * 0.22f), fill(c, 0xFF7B5C38.toInt(), a))
+        c.drawOval(rect(-s * 0.30f, -s * 0.16f, s * 0.02f, s * 0.04f), fill(c, 0xFF9C7A4E.toInt(), (a * 0.8f).toInt()))
+        for (i in 0..2) {
+            val bx = -s * 0.26f + i * s * 0.10f
+            c.drawLine(bx, -s * 0.19f, bx, s * 0.19f, stroke(0xFFC9AE82.toInt(), (a * 0.6f).toInt(), (s * 0.02f).coerceAtLeast(dp * 0.6f)))
+        }
+        // 胸
+        c.drawOval(rect(-s * 0.04f, -s * 0.20f, s * 0.14f, s * 0.20f), fill(c, 0xFF6A4A2C.toInt(), a))
+        // 头 + 眼
+        c.drawCircle(s * 0.20f, 0f, s * 0.13f, fill(c, 0xFF4A3018.toInt(), a))
+        c.drawCircle(s * 0.24f, -s * 0.06f, s * 0.045f, fill(c, 0xFF1E1206.toInt(), a))
+        c.drawCircle(s * 0.24f, s * 0.06f, s * 0.045f, fill(c, 0xFF1E1206.toInt(), a))
+        // 羽状触角
+        for (side in intArrayOf(-1, 1)) {
+            val ant = stroke(0xFF5A4A2E.toInt(), a, (s * 0.028f).coerceAtLeast(dp * 0.7f))
+            c.drawLine(s * 0.26f, side * s * 0.08f, s * 0.46f, side * s * 0.22f, ant)
+            c.drawLine(s * 0.46f, side * s * 0.22f, s * 0.52f, side * s * 0.36f, ant)
+            val hair = stroke(0xFF7A6440.toInt(), (a * 0.6f).toInt(), dp * 0.7f)
+            c.drawLine(s * 0.34f, side * s * 0.13f, s * 0.38f, side * s * 0.26f, hair)
+            c.drawLine(s * 0.42f, side * s * 0.17f, s * 0.44f, side * s * 0.32f, hair)
+        }
+        if (fat) c.drawOval(rect(-s * 0.34f, -s * 0.30f, s * 0.24f, s * 0.30f), fill(c, 0xFFFFCE6B.toInt(), (a * 0.14f).toInt()))
+    }
+
+    /** 蜈蚣：橙红分节 + 黄色足 + 波浪步态 */
+    private fun drawCentipede(c: Canvas, s: Float, phase: Float, a: Int, fat: Boolean) {
+        val segs = 11
+        val legW = (s * 0.042f).coerceAtLeast(dp * 0.9f)
+        val legs = stroke(0xFFA96B18.toInt(), a, legW)
+        val legsDark = stroke(0xFF6E4410.toInt(), a, dp * 0.8f)
+
+        for (i in 0..segs) {
+            val fx = -s * 0.56f + (i.toFloat() / segs) * s * 1.04f
+            val off = sin(phase * 6f + i * 0.85f) * s * 0.08f
+            val r = s * 0.135f * (1.06f - abs(i - segs / 2f) / (segs * 1.6f))
+
+            // 两段式短足，向后倾
+            val wig = sin(phase * 10f + i * 0.9f) * s * 0.03f
+            for (side in intArrayOf(-1, 1)) {
+                c.drawLine(fx, off + side * r * 0.6f, fx - s * 0.05f, off + side * (r + s * 0.15f) + wig * side, legs)
+                c.drawLine(fx - s * 0.05f, off + side * (r + s * 0.15f) + wig * side, fx - s * 0.13f, off + side * (r + s * 0.26f), legsDark)
+            }
+
+            // 体节：外圈深、内圈亮、顶部高光
+            c.drawCircle(fx, off, r, fill(c, 0xFF7E3419.toInt(), a))
+            c.drawCircle(fx, off - r * 0.14f, r * 0.78f, fill(c, 0xFFC0653C.toInt(), a))
+            c.drawCircle(fx, off - r * 0.36f, r * 0.36f, fill(c, 0xFFE0905F.toInt(), (a * 0.55f).toInt()))
+            // 节间暗缝
+            c.drawLine(fx + r * 0.9f, off - r * 0.8f, fx + r * 0.9f, off + r * 0.8f, stroke(0xFF5E2410.toInt(), (a * 0.5f).toInt(), dp * 0.7f))
+        }
+
+        // 头
+        val hy = sin(phase * 6f + segs * 0.85f) * s * 0.08f
+        c.drawCircle(s * 0.50f, hy, s * 0.17f, fill(c, 0xFF6B2814.toInt(), a))
+        c.drawCircle(s * 0.54f, hy - s * 0.05f, s * 0.05f, fill(c, 0xFFA4492A.toInt(), (a * 0.8f).toInt()))
+        // 颚须
+        val ant = stroke(0xFF5A2410.toInt(), a, (s * 0.03f).coerceAtLeast(dp * 0.7f))
+        val sway = sin(phase * 5f) * s * 0.06f
+        c.drawLine(s * 0.62f, hy - s * 0.08f, s * 0.80f, hy - s * 0.20f + sway, ant)
+        c.drawLine(s * 0.62f, hy + s * 0.08f, s * 0.80f, hy + s * 0.20f + sway, ant)
+        if (fat) c.drawCircle(0f, 0f, s * 0.5f, fill(c, 0xFFFFCE6B.toInt(), (a * 0.10f).toInt()))
+    }
+
+    private fun rect(l: Float, t: Float, r: Float, b: Float): RectF {
+        tmpRect.set(l, t, r, b)
+        return tmpRect
     }
 
     // ---------------------------------------------------------------- 触摸
