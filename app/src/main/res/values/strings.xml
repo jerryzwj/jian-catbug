@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">简·猫抓虫</string>
+    <string name="pause_menu_hint">三根手指按住屏幕 1.5 秒，可打开设置</string>
+</resources>
